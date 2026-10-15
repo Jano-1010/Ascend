@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   addDays,
+  buildDayPlan,
   conflicts,
   dayInfo,
   focusLookup,
+  recentUsage,
   suggestDay,
   suggestWeek,
   weekStart,
@@ -123,5 +125,37 @@ describe("dayInfo", () => {
 
   it("never counts a rest day as done", () => {
     expect(dayInfo(MON, [], { [MON]: { focus: "rest", done: true } }).done).toBe(false);
+  });
+});
+
+describe("saved trainings", () => {
+  const names = (p: ReturnType<typeof buildDayPlan>) => p.blocks.flatMap((b) => b.exercises.map((e) => e.name));
+
+  it("counts exercises of nearby saved plans but not the day itself", () => {
+    const monday = buildDayPlan(MON, "upper", "gym_full", 60, [], {});
+    const plan: WeekPlan = {
+      [MON]: { focus: "upper", done: false, plan: monday },
+      [addDays(MON, 3)]: { focus: "upper", done: false },
+    };
+    const usage = recentUsage(addDays(MON, 3), [], plan);
+    expect(usage.get(names(monday)[0])).toBe(1);
+    expect(recentUsage(MON, [], plan).size).toBe(0);
+  });
+
+  it("varies a second upper-body day against the first", () => {
+    const first = buildDayPlan(MON, "upper", "gym_full", 60, [], {});
+    const plan: WeekPlan = { [MON]: { focus: "upper", done: false, plan: first } };
+    const second = buildDayPlan(addDays(MON, 3), "upper", "gym_full", 60, [], plan);
+    expect(names(second)).not.toEqual(names(first));
+  });
+
+  it("ignores saved plans of days that were logged as a session", () => {
+    const first = buildDayPlan(MON, "upper", "gym_full", 60, [], {});
+    const logged = {
+      id: "x", date: MON, startedAt: `${MON}T10:00:00.000Z`, location: "gym_full", focus: "upper", durationMin: 40,
+      blocks: [{ name: "b", type: "heavy", exercises: [{ name: "Klimmzüge", prescribedSets: 3, prescribedReps: "5", restSec: 60, note: "", sets: [{ weightKg: 0, reps: 5 }] }] }],
+    } as Session;
+    const usage = recentUsage(addDays(MON, 2), [logged], { [MON]: { focus: "upper", done: false, plan: first } });
+    expect([...usage.keys()]).toEqual(["Klimmzüge"]);
   });
 });

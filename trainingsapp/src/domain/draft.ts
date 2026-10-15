@@ -99,14 +99,22 @@ export function addManualExercise(draft: Draft, name: string, index: ExerciseInd
   return ex;
 }
 
-export function doneSetCount(draft: Draft): number {
-  return draft.blocks.reduce(
-    (n, b) => n + b.exercises.reduce((m, e) => m + e.rows.filter((r) => r.done).length, 0),
-    0,
-  );
+/**
+ * A row counts as performed when it was ticked, or when it is filled in: reps entered, and a weight too for loaded
+ * exercises. So after the training nobody has to tick every set; clear the reps or remove the set to skip it.
+ */
+export function rowCounts(ex: Pick<Exercise, "name">, row: Row): boolean {
+  if (!(parseNum(row.reps) > 0)) return false;
+  if (row.done) return true;
+  const weighted = exerciseDef(ex.name)?.weighted ?? true;
+  return !weighted || !Number.isNaN(parseNum(row.weight));
 }
 
-/** Converts the draft to a saved session. Only checked sets are kept; returns null if there are none. */
+export function doneSetCount(draft: Draft): number {
+  return draft.blocks.reduce((n, b) => n + b.exercises.reduce((m, e) => m + e.rows.filter((r) => rowCounts(e, r)).length, 0), 0);
+}
+
+/** Converts the draft to a saved session. Filled-in sets are kept (see `rowCounts`); returns null if there are none. */
 export function draftToSession(draft: Draft, now = new Date()): Session | null {
   const blocks = draft.blocks
     .map((b) => ({
@@ -118,7 +126,7 @@ export function draftToSession(draft: Draft, now = new Date()): Session | null {
           return {
             ...ex,
             sets: rows
-              .filter((r) => r.done && parseNum(r.reps) > 0)
+              .filter((r) => rowCounts(ex, r))
               .map((r) => ({
                 weightKg: weighted ? Math.max(0, parseNum(r.weight) || 0) : 0,
                 reps: parseNum(r.reps),
@@ -129,7 +137,9 @@ export function draftToSession(draft: Draft, now = new Date()): Session | null {
     }))
     .filter((b) => b.exercises.length > 0);
   if (blocks.length === 0) return null;
-  const minutes = Math.round((now.getTime() - new Date(draft.startedAt).getTime()) / 60000);
+  // A session logged for another day has no meaningful stopwatch, so use the planned length.
+  const sameDay = localDate(now) === draft.date;
+  const minutes = sameDay ? Math.round((now.getTime() - new Date(draft.startedAt).getTime()) / 60000) : draft.estimatedMin;
   return {
     id: draft.id,
     date: draft.date,

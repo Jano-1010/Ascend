@@ -1,13 +1,13 @@
 import { createDraft } from "../domain/draft";
 import { fmtShortDate, localDate } from "../domain/format";
 import { BUDGETS, FOCI, LOCATIONS, focusLabel, locationLabel } from "../domain/locations";
-import { generatePlan } from "../domain/plan";
 import { isoWeek } from "../domain/stats";
-import type { LocationId } from "../domain/types";
+import type { LocationId, Plan } from "../domain/types";
 import {
   MAX_WEEK_SESSIONS,
   MIN_WEEK_SESSIONS,
   addDays,
+  buildDayPlan,
   conflicts,
   dayInfo,
   focusLookup,
@@ -68,6 +68,27 @@ function chipGroup<T extends string | number>(
   );
 }
 
+const repsText = (reps: string) => (reps ? ` × ${reps}` : "");
+
+/** The saved training of a day: blocks and exercises, plus a button to get a different mix. */
+function planCard(plan: Plan, onShuffle?: () => void): HTMLElement {
+  const card = h(
+    "div",
+    { class: "wk-plan" },
+    h("div", { class: "wk-label" }, `Training · ca. ${plan.estimatedMin} min`),
+    ...plan.blocks.map((b) =>
+      h(
+        "div",
+        { class: "wk-block" },
+        h("div", { class: "wk-block-name" }, b.name),
+        h("ul", {}, ...b.exercises.map((e) => h("li", {}, `${e.name} · ${e.prescribedSets}${repsText(e.prescribedReps)}`))),
+      ),
+    ),
+  );
+  if (onShuffle) card.append(h("button", { type: "button", class: "wk-btn", onclick: onShuffle }, "Neu mischen"));
+  return card;
+}
+
 function parseDate(iso: string): Date {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(y, m - 1, d);
@@ -86,19 +107,56 @@ export function renderWeek(ctx: AppContext): HTMLElement {
   /** First day suggestions are made for: today inside the current week, else the week start. */
   const suggestFrom = (start: string) => (start <= today && today < addDays(start, 7) ? today : start);
 
+  /** The saved training of a day is rebuilt when its focus, place or length changes. */
+  function makePlan(date: string, entry: DayEntry, replacing?: Plan): Plan | undefined {
+    if (!isTraining(entry.focus)) return undefined;
+    return buildDayPlan(
+      date,
+      entry.focus,
+      entry.location ?? state.prefs.location,
+      entry.budgetMin ?? state.prefs.budgetMin,
+      state.sessions,
+      state.week,
+      replacing,
+    );
+  }
+
   async function patchEntry(date: string, patch: Partial<DayEntry> | null) {
     if (patch === null) delete state.week[date];
     else {
       const base: DayEntry = state.week[date] ?? { focus: "rest", done: false };
-      state.week[date] = { ...base, ...patch };
+      const entry: DayEntry = { ...base, ...patch };
+      const changed = "focus" in patch || "location" in patch || "budgetMin" in patch;
+      delete entry.plan;
+      state.week[date] = entry;
+      if (!changed && base.plan) entry.plan = base.plan;
+      else {
+        const plan = makePlan(date, entry);
+        if (plan) entry.plan = plan;
+      }
     }
+    await ctx.saveWeek();
+    draw();
+  }
+
+  async function shuffle(date: string) {
+    const entry = state.week[date];
+    if (!entry) return;
+    const plan = makePlan(date, entry, entry.plan);
+    if (plan) entry.plan = plan;
     await ctx.saveWeek();
     draw();
   }
 
   async function planWeek() {
     const result = suggestWeek(suggestFrom(view.start!), focusOf(), target());
-    for (const [date, focus] of Object.entries(result)) state.week[date] = { focus, done: false };
+    // Day by day, so each saved training counts for the variety of the next one.
+    for (const [date, focus] of Object.entries(result).sort(([a], [b]) => a.localeCompare(b))) {
+      const entry: DayEntry = { focus, done: false };
+      state.week[date] = entry;
+      const plan = makePlan(date, entry);
+      if (plan) entry.plan = plan;
+    }
     await ctx.saveWeek();
     ctx.toast(Object.keys(result).length === 0 ? "Alle Tage sind schon belegt." : "Woche geplant. Tage antippen zum Ändern.");
     draw();
@@ -107,8 +165,8 @@ export function renderWeek(ctx: AppContext): HTMLElement {
   function startTraining(date: string, focus: DayFocus) {
     if (!isTraining(focus)) return;
     const entry = state.week[date];
-    const plan = generatePlan(entry?.location ?? state.prefs.location, focus, entry?.budgetMin ?? state.prefs.budgetMin);
-    if (plan.blocks.length === 0) {
+    const plan = entry?.plan ?? (entry ? makePlan(date, entry) : undefined);
+    if (!plan || plan.blocks.length === 0) {
       ctx.toast("Für diese Auswahl gibt es keinen passenden Plan. Anderen Ort oder mehr Zeit wählen.");
       return;
     }
@@ -148,7 +206,7 @@ export function renderWeek(ctx: AppContext): HTMLElement {
     const options = [...FOCI.map((f) => ({ id: f.id as DayFocus, label: f.label })), { id: "rest" as DayFocus, label: "Ruhetag" }];
     el.append(
       chipGroup(past ? "Was hast du trainiert?" : "Training", options, info.focus, (f) =>
-        void patchEntry(date, { focus: f, done: past && f !== "rest", ...(f === "rest" ? { done: false } : {}) }),
+        void patchEntry(date, { focus: f, done: false }),
       ),
     );
 
@@ -157,7 +215,7 @@ export function renderWeek(ctx: AppContext): HTMLElement {
       if (reasons.length > 0) {
         el.append(h("div", { class: "wk-warn" }, `Übertrainings-Risiko: ${reasons.join("; ")}.`));
       }
-      if (date >= today) {
+      {
         const loc = entry?.location ?? state.prefs.location;
         const dur = entry?.budgetMin ?? state.prefs.budgetMin;
         el.append(
@@ -179,6 +237,18 @@ export function renderWeek(ctx: AppContext): HTMLElement {
       }
     }
 
+    if (isTraining(info.focus) && entry) {
+      if (!entry.plan) {
+        // Entries from before saved trainings existed get theirs on first view.
+        const plan = makePlan(date, entry);
+        if (plan) {
+          entry.plan = plan;
+          void ctx.saveWeek();
+        }
+      }
+      if (entry.plan) el.append(planCard(entry.plan, info.done ? undefined : () => void shuffle(date)));
+    }
+
     if (info.done) {
       el.append(h("div", { class: "wk-done-note" }, `Erledigt · ${dayLabel(info.focus!)}`));
     }
@@ -190,10 +260,8 @@ export function renderWeek(ctx: AppContext): HTMLElement {
       actions.append(h("button", { type: "button", class: "wk-btn primary", onclick: () => void patchEntry(date, { focus: "rest", done: false }) }, "Vorschlag übernehmen"));
     }
     if (isTraining(info.focus) && !info.done) {
-      if (date === today) {
-        actions.append(h("button", { type: "button", class: "wk-btn primary", onclick: () => startTraining(date, info.focus!) }, `${dayLabel(info.focus!)} starten`));
-      }
       if (date <= today) {
+        actions.append(h("button", { type: "button", class: "wk-btn primary", onclick: () => startTraining(date, info.focus!) }, date === today ? `${dayLabel(info.focus!)} starten` : `${dayLabel(info.focus!)} erfassen`));
         actions.append(h("button", { type: "button", class: "wk-btn", onclick: () => void patchEntry(date, { done: true }) }, "Ohne Details als gemacht markieren"));
       }
     }

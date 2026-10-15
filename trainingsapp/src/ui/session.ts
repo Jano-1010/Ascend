@@ -202,7 +202,7 @@ export function renderSession(ctx: AppContext, draft: Draft): HTMLElement {
   const save = async () => {
     const session = draftToSession(draft);
     if (!session) {
-      ctx.toast("Noch kein Satz abgehakt.");
+      ctx.toast("Noch keine Sätze mit Wiederholungen eingetragen.");
       return;
     }
     await ctx.storage.putSession(session);

@@ -292,3 +292,7 @@ button.tile { cursor: pointer; }
 .wk-btn.danger { width: auto; padding: 0 16px; flex: none; color: var(--danger); border-color: var(--danger); }
 .wk-arrows { align-items: center; }
 .wk-today { min-height: 36px; padding: 0 12px; margin-right: 4px; background: transparent; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; color: var(--accent-text-soft); }
+.wk-plan { display: flex; flex-direction: column; gap: 10px; }
+.wk-block-name { font-size: 14px; font-weight: 600; }
+.wk-block ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+.wk-block li { margin: 2px 0; }

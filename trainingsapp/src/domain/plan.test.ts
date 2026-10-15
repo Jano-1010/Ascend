@@ -75,3 +75,33 @@ describe("generatePlan", () => {
     expect(plan.omitted.some((o) => o.includes("Back Squat"))).toBe(true);
   });
 });
+
+describe("generatePlan variety", () => {
+  const names = (p: ReturnType<typeof generatePlan>) => p.blocks.flatMap((b) => b.exercises.map((e) => e.name));
+
+  it("changes nothing without hints", () => {
+    expect(names(generatePlan("gym_full", "upper", 60))).toEqual(names(generatePlan("gym_full", "upper", 60, {})));
+  });
+
+  it("prefers exercises that were used less lately", () => {
+    const base = names(generatePlan("gym_full", "lower", 60));
+    const recent = new Map(base.map((n) => [n, 3]));
+    const varied = names(generatePlan("gym_full", "lower", 60, { recent }));
+    expect(varied).not.toEqual(base);
+  });
+
+  it("avoids the previous exercises when shuffling and still respects equipment", () => {
+    const first = generatePlan("gym_full", "upper", 60);
+    const avoid = new Set(first.blocks.flatMap((b) => b.exercises.map((e) => e.name)));
+    const second = generatePlan("gym_full", "upper", 60, { avoid });
+    expect(names(second)).not.toEqual(names(first));
+    for (const e of second.blocks.flatMap((b) => b.exercises))
+      for (const req of exerciseDef(e.name)!.requires)
+        expect(LOCATIONS.find((l) => l.id === "gym_full")!.equipment).toContain(req);
+  });
+
+  it("keeps fixed competition movements even when they were used lately", () => {
+    const recent = new Map([["Shoulder to Overhead (Langhantel)", 9]]);
+    expect(names(generatePlan("gym_full", "athx", 60, { recent }))).toContain("Shoulder to Overhead (Langhantel)");
+  });
+});

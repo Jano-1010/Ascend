@@ -47,13 +47,13 @@ describe("draft", () => {
     expect(g2o.rows[0].weight).toBe("20");
   });
 
-  it("saves only checked sets and drops empty exercises and blocks", () => {
+  it("drops sets without reps, empty exercises and blocks", () => {
     const draft = createDraft(generatePlan("gym_full", "upper", 30), {});
     expect(draftToSession(draft)).toBeNull();
     const bench = draft.blocks[0].exercises[0];
     bench.rows[0] = { weight: "82,5", reps: "5", done: true };
     bench.rows[1] = { weight: "82,5", reps: "", done: true }; // no reps, ignored
-    expect(doneSetCount(draft)).toBe(2);
+    expect(doneSetCount(draft)).toBe(1);
     const session = draftToSession(draft, new Date(new Date(draft.startedAt).getTime() + 47 * 60000))!;
     expect(session.durationMin).toBe(47);
     expect(session.blocks).toHaveLength(1);
@@ -74,6 +74,41 @@ describe("draft", () => {
     addManualExercise(draft, "Plank", {});
     addManualExercise(draft, "Sit-ups", {});
     expect(draft.blocks.filter((b) => b.name === "Zusatz (manuell)")).toHaveLength(1);
+  });
+});
+
+describe("saving without ticking", () => {
+  it("keeps all prefilled sets even if none was ticked", () => {
+    const plan = generatePlan("gym_full", "upper", 30);
+    const first = plan.blocks[0].exercises[0].name;
+    const index = { [first]: { name: first, lastWeight: 60, lastReps: 5, bestE1RM: 70, lastDate: "2026-09-28" } };
+    const draft = createDraft(plan, index);
+    const bench = draft.blocks[0].exercises[0];
+    const session = draftToSession(draft)!;
+    expect(session).not.toBeNull();
+    const saved = session.blocks.flatMap((b) => b.exercises).find((e) => e.name === bench.name)!;
+    expect(saved.sets).toHaveLength(bench.rows.length);
+  });
+
+  it("skips loaded sets without a weight and sets with cleared reps", () => {
+    const draft = createDraft(generatePlan("gym_full", "upper", 30), {});
+    const ex = draft.blocks[0].exercises[0];
+    ex.rows[0] = { weight: "", reps: "5", done: false };
+    ex.rows[1] = { weight: "60", reps: "", done: false };
+    ex.rows[2] = { weight: "60", reps: "5", done: false };
+    const session = draftToSession(draft)!;
+    expect(session.blocks[0].exercises[0].sets).toEqual([{ weightKg: 60, reps: 5 }]);
+  });
+});
+
+describe("draftToSession duration", () => {
+  it("uses the planned length for a session logged on another day", () => {
+    const plan = generatePlan("gym_full", "upper", 45);
+    const draft = createDraft(plan, {}, new Date("2026-10-05T12:00:00"));
+    draft.blocks[0].exercises[0].rows[0].done = true;
+    const session = draftToSession(draft, new Date("2026-10-09T18:00:00"))!;
+    expect(session.date).toBe("2026-10-05");
+    expect(session.durationMin).toBe(plan.estimatedMin);
   });
 });
 

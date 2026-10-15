@@ -1,5 +1,6 @@
 import { localDate } from "./format";
-import type { FocusId, LocationId, Session } from "./types";
+import { generatePlan } from "./plan";
+import type { FocusId, LocationId, Plan, Session } from "./types";
 
 /** What a day holds in the weekly plan. "rest" is an explicit rest day. */
 export type DayFocus = FocusId | "rest";
@@ -11,6 +12,8 @@ export interface DayEntry {
   /** Where and how long this day is planned. Falls back to the app defaults. */
   location?: LocationId;
   budgetMin?: number;
+  /** The generated training for this day, saved so it stays the same when you come back. */
+  plan?: Plan;
 }
 
 /** Keyed by YYYY-MM-DD. */
@@ -168,4 +171,39 @@ export function weekSummary(start: string, focusOf: FocusOf, isDone: (date: stri
     s.byFocus[f] = (s.byFocus[f] ?? 0) + 1;
   }
   return s;
+}
+
+/** Days around a date whose exercises count as "recent" when picking variety. */
+const VARIETY_DAYS = 10;
+
+/** How often each exercise appears in logged sessions and saved plans near `date` (the day itself excluded). */
+export function recentUsage(date: string, sessions: Session[], plan: WeekPlan): Map<string, number> {
+  const usage = new Map<string, number>();
+  const bump = (names: Iterable<string>) => {
+    for (const n of names) usage.set(n, (usage.get(n) ?? 0) + 1);
+  };
+  for (let off = -VARIETY_DAYS; off <= VARIETY_DAYS; off++) {
+    if (off === 0) continue;
+    const d = addDays(date, off);
+    for (const s of sessions) {
+      if (s.date === d) bump(s.blocks.flatMap((b) => b.exercises.filter((e) => e.sets.length > 0).map((e) => e.name)));
+    }
+    const saved = plan[d]?.plan;
+    if (saved && !sessions.some((s) => s.date === d)) bump(saved.blocks.flatMap((b) => b.exercises.map((e) => e.name)));
+  }
+  return usage;
+}
+
+/** Generates the training for a day with variety against the days around it. Pass `replacing` to shuffle. */
+export function buildDayPlan(
+  date: string,
+  focus: FocusId,
+  location: LocationId,
+  budgetMin: number,
+  sessions: Session[],
+  plan: WeekPlan,
+  replacing?: Plan,
+): Plan {
+  const avoid = replacing ? new Set(replacing.blocks.flatMap((b) => b.exercises.map((e) => e.name))) : undefined;
+  return generatePlan(location, focus, budgetMin, { recent: recentUsage(date, sessions, plan), ...(avoid ? { avoid } : {}) });
 }
