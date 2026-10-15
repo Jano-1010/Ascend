@@ -129,7 +129,9 @@ export function draftToSession(draft: Draft, now = new Date()): Session | null {
     }))
     .filter((b) => b.exercises.length > 0);
   if (blocks.length === 0) return null;
-  const minutes = Math.round((now.getTime() - new Date(draft.startedAt).getTime()) / 60000);
+  // A session logged for another day has no meaningful stopwatch, so use the planned length.
+  const sameDay = localDate(now) === draft.date;
+  const minutes = sameDay ? Math.round((now.getTime() - new Date(draft.startedAt).getTime()) / 60000) : draft.estimatedMin;
   return {
     id: draft.id,
     date: draft.date,

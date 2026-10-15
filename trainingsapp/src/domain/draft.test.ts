@@ -77,6 +77,17 @@ describe("draft", () => {
   });
 });
 
+describe("draftToSession duration", () => {
+  it("uses the planned length for a session logged on another day", () => {
+    const plan = generatePlan("gym_full", "upper", 45);
+    const draft = createDraft(plan, {}, new Date("2026-10-05T12:00:00"));
+    draft.blocks[0].exercises[0].rows[0].done = true;
+    const session = draftToSession(draft, new Date("2026-10-09T18:00:00"))!;
+    expect(session.date).toBe("2026-10-05");
+    expect(session.durationMin).toBe(plan.estimatedMin);
+  });
+});
+
 describe("parseNum", () => {
   it("accepts comma and dot, rejects empty", () => {
     expect(parseNum("82,5")).toBe(82.5);
